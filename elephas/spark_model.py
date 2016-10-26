@@ -1,6 +1,8 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
+import time
+
 import numpy as np
 from itertools import tee
 import socket
@@ -8,6 +10,7 @@ from multiprocessing import Process
 import six.moves.cPickle as pickle
 from six.moves import range
 from flask import Flask, request
+
 try:
     import urllib.request as urllib2
 except ImportError:
@@ -23,15 +26,22 @@ from .optimizers import SGD as default_optimizer
 
 from keras.models import model_from_yaml
 
+
 def get_server_weights(master_url='localhost:5000'):
     '''
     Retrieve master weights from parameter server
     '''
     request = urllib2.Request('http://{0}/parameters'.format(master_url),
                               headers={'Content-Type': 'application/elephas'})
-    ret = urllib2.urlopen(request).read()
-    weights = pickle.loads(ret)
-    return weights
+    for _ in range(3):
+        try:
+            ret = urllib2.urlopen(request).read()
+            weights = pickle.loads(ret)
+            return weights
+        except Exception, err:
+            time.sleep(5)
+
+    raise ValueError('Can not access remote server')
 
 
 def put_deltas_to_server(delta, master_url='localhost:5000'):
@@ -48,6 +58,7 @@ class SparkModel(object):
     SparkModel is the main abstraction of elephas. Every other model
     should inherit from it.
     '''
+
     def __init__(self, sc, master_network, optimizer=None, mode='asynchronous', frequency='epoch',
                  num_workers=4,
                  master_optimizer="adam",
@@ -55,7 +66,6 @@ class SparkModel(object):
                  master_metrics=None,
                  custom_objects=None,
                  *args, **kwargs):
-
 
         self.spark_context = sc
         self._master_network = master_network
@@ -91,21 +101,16 @@ class SparkModel(object):
         '''
         Get configuration of training parameters
         '''
-        train_config = {}
-        train_config['nb_epoch'] = nb_epoch
-        train_config['batch_size'] = batch_size
-        train_config['verbose'] = verbose
-        train_config['validation_split'] = validation_split
+        train_config = {'nb_epoch': nb_epoch, 'batch_size': batch_size, 'verbose': verbose,
+                        'validation_split': validation_split}
         return train_config
 
     def get_config(self):
         '''
         Get configuration of model parameters
         '''
-        model_config = {}
-        model_config['model'] = self.master_network.get_config()
-        model_config['optimizer'] = self.optimizer.get_config()
-        model_config['mode'] = self.mode
+        model_config = {'model': self.master_network.get_config(), 'optimizer': self.optimizer.get_config(),
+                        'mode': self.mode}
         return model_config
 
     @property
@@ -127,6 +132,7 @@ class SparkModel(object):
         ''' Terminate parameter server'''
         self.server.terminate()
         self.server.join()
+        self.server = None
 
     def start_service(self):
         ''' Define service and run flask app'''
@@ -155,6 +161,7 @@ class SparkModel(object):
             constraints = self.master_network.constraints
             if len(constraints) == 0:
                 def empty(a): return a
+
                 constraints = [empty for x in self.weights]
             self.weights = self.optimizer.get_updates(self.weights, constraints, delta)
             if self.mode == 'asynchronous':
@@ -225,6 +232,7 @@ class SparkWorker(object):
     '''
     Synchronous Spark worker. This code will be executed on workers.
     '''
+
     def __init__(self, yaml, parameters, train_config, master_optimizer, master_loss, master_metrics, custom_objects):
         self.yaml = yaml
         self.parameters = parameters
@@ -257,7 +265,9 @@ class AsynchronousSparkWorker(object):
     '''
     Asynchronous Spark worker. This code will be executed on workers.
     '''
-    def __init__(self, yaml, train_config, frequency, master_url, master_optimizer, master_loss, master_metrics, custom_objects):
+
+    def __init__(self, yaml, train_config, frequency, master_url, master_optimizer, master_loss, master_metrics,
+                 custom_objects):
         self.yaml = yaml
         self.train_config = train_config
         self.frequency = frequency
@@ -266,7 +276,6 @@ class AsynchronousSparkWorker(object):
         self.master_loss = master_loss
         self.master_metrics = master_metrics
         self.custom_objects = custom_objects
-
 
     def train(self, data_iterator):
         '''
@@ -286,9 +295,9 @@ class AsynchronousSparkWorker(object):
         nb_epoch = self.train_config['nb_epoch']
         batch_size = self.train_config.get('batch_size')
         nb_train_sample = len(x_train[0])
-        nb_batch = int(np.ceil(nb_train_sample/float(batch_size)))
+        nb_batch = int(np.ceil(nb_train_sample / float(batch_size)))
         index_array = np.arange(nb_train_sample)
-        batches = [(i*batch_size, min(nb_train_sample, (i+1)*batch_size)) for i in range(0, nb_batch)]
+        batches = [(i * batch_size, min(nb_train_sample, (i + 1) * batch_size)) for i in range(0, nb_batch)]
 
         if self.frequency == 'epoch':
             for epoch in range(nb_epoch):
@@ -324,6 +333,7 @@ class SparkMLlibModel(SparkModel):
     MLlib model takes RDDs of LabeledPoints. Internally we just convert
     back to plain old pair RDDs and continue as in SparkModel
     '''
+
     def __init__(self, sc, master_network, optimizer=None, mode='asynchronous', frequency='epoch', num_workers=4,
                  master_optimizer="adam",
                  master_loss="categorical_crossentropy",

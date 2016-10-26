@@ -6,12 +6,14 @@ import numpy as np
 from keras.models import model_from_yaml
 import six.moves.cPickle as pickle
 
+
 # depend on hyperas, boto etc. is optional
 
 class HyperParamModel(object):
     '''
     HyperParamModel
     '''
+
     def __init__(self, sc, num_workers=4):
         self.spark_context = sc
         self.num_workers = num_workers
@@ -54,11 +56,11 @@ class HyperParamModel(object):
         trials_list = self.compute_trials(model, data, max_evals)
         num_trials = sum(len(trials) for trials in trials_list)
         if num_trials < nb_models:
-            nb_models = len(trials)
+            nb_models = len(trials_list[0])
         scores = []
         for trials in trials_list:
             scores = scores + [trial.get('result').get('loss') for trial in trials]
-        cut_off = sorted(scores, reverse=True)[nb_models-1]
+        cut_off = sorted(scores, reverse=True)[nb_models - 1]
         model_list = []
         for trials in trials_list:
             for trial in trials:
@@ -67,6 +69,7 @@ class HyperParamModel(object):
                     model.set_weights(pickle.loads(trial.get('result').get('weights')))
                     model_list.append(model)
         return model_list
+
 
 class HyperasWorker(object):
     def __init__(self, bc_model, bc_max_evals):
